@@ -299,7 +299,7 @@ module Markus
       begin
         FileUtils.mkdir(docroot,:mode=>0755,:verbose=>1)
       rescue Exception => e
-        e.extend DetailedExceptiond
+        e.extend DetailedException
         e.filename = docroot
         puts "zok we are ok :"+e.filename
     exit
