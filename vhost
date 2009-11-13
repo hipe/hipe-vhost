@@ -1,0 +1,333 @@
+#!/usr/bin/env ruby
+require 'rubygems'
+require 'pp'
+require 'fileutils'
+
+# -- config data --
+conf = {
+  :httpd_conf_path => '/etc/apache2/httpd.conf',
+  :hosts_path      => '/etc/hosts',
+  :vhost_folder    => '/private/etc/apache2/other/', # /etc is softlink to /private/etc but leave this like this for re
+  :docroot_append  => '', #'/web', # no trailing slash
+  :sites_folder    => '/Users/markmeves/Sites'
+}
+# -- end config data --
+
+module Markus
+  
+  class VhostCliException < Exception
+  end
+  
+  module DetailedException
+    def self.extend_object(base)
+     base.instance_eval do
+        @__info = {}
+     end
+     super
+    end
+    def method_missing name, *args, &blah
+      if /^(.+)=$/ =~ name.to_s
+        @__info[$1.to_sym] = args[0]
+      else
+        @__info[name.to_sym]
+      end
+    end
+  end
+    
+  class VhostCli
+    
+    def initialize(conf)
+      @actions = ['list','add','configure','help','explain']
+      @conf = conf
+    end
+    
+    # thank you actionpack -- but note it doesn't break up long words but whatever
+    def wordwrap(text,width)
+      text.split("\n").map do |line|
+        line.length > width ? line.gsub(/(.{1,#{width}})(\s+|$)/, "\\1\n").strip : line
+      end * "\n"
+    end
+    
+    def indent(text, margin, width)
+      wordwrap(text,width).gsub(/\n/, "\n"+(' '*margin))
+    end
+    
+    def run(argv)
+      if (! argv[0] || ! @actions.include?( argv[0] ))
+        puts text_for_usage
+        exit
+      end      
+      action = argv.shift
+      action = help if (['-h','--help'].include?(action))
+      meth = 'execute_'+action
+      send(meth, argv)
+    end
+    
+    def program_name
+      File.basename $PROGRAM_NAME
+    end
+    
+    def execute_help(args)
+      print text_for_usage+"\n\n"
+      exit
+    end
+
+    def text_for_usage
+      <<-END.gsub(/^ {8}/,'')
+        Add virtualhosts.
+        
+        Usage: #{program_name} COMMAND [ARGUMENTS]
+  
+        Commands:
+          help         show this screen
+          explain      explains the steps involved in adding a virtualhost -- you 
+                       should understand this before using this script
+          list         list the existing vhost entries and summary info about them
+          add NAME     add a virtual host named name to the relevant places, restart 
+                       apache.
+          configure    (not yet implemented!)
+      END
+    end
+    
+    def text_for_description
+      <<-END.gsub(/^ {8}/,'')
+        HOW TO ADD A VIRTUALHOST (the really short version):
+        1) $ locate httpd.conf   # then jump to the relevant lines at the end
+        2) copy paste a new virtualhost section into the file -or-
+           add such vhost config file into a folder that gets Include'd 
+        3) $ locate /etc/hosts     # find the right file, it's usually this one
+        4) copy paste your line
+        5) apachectl stop
+        6) apachectl start      
+      END
+    end
+
+    def make_backup_of_file orig_path
+      append = Time.now.strftime('%Y-%m-%d_%H:%M:%S')
+      new_name = %{#{orig_path}.bak.#{append}}
+      i = 1
+      while File.exist? new_name  # very unlikely
+        new_name = %{#{orig_path}.bak.#{append}.#{i}}
+        i += 1
+      end
+      begin
+        FileUtils.copy_file orig_path, new_name
+      rescue Errno::EACCES => e
+        e.extend DetailedException
+        e.filename = new_name
+        raise e
+      end
+      puts "made backup copy: #{new_name}"
+    end
+
+    def entries_from_httpd_conf 
+      
+      # get all the virtual domains names that are defined in your httpd.conf file
+      contents = nil
+      File.open(@conf[:httpd_conf_path],'r') {|fh| contents = fh.read }
+      vh = 'VirtualHost'        
+      names1 = contents.scan(%r{^<#{vh}[^>]*>((?:.(?!</#{vh}>))*.)}m).map{
+        |x| x[0].scan(%r{\bServerName +([^[:space:]]+)})[0][0] 
+      }
+      # get all the virtual domains defined in their own files that are Include'd by the above file
+      vhost_folder = @conf[:vhost_folder]
+      re = %r{Include #{vhost_folder}\*\.conf}
+      unless re.match contents
+        msg = %{we need to implement this, sorry! No 'Include "#{@conf[:vhost_folder]}*.conf"' }+
+        %{found in #{@conf[:httpd_conf_path]}}
+        raise VhostCliException.new msg
+      end
+      dir = Dir.new(vhost_folder) # raises Errno::ENOENT when not exist
+      names2 = dir.grep(%r{\.conf$}).map{|x| x.scan(%r{^(.+)\.conf$})[0][0]}
+      ret = names1 | names2
+    end
+
+    def entries_from_hosts
+      matches = nil
+      File.open(@conf[:hosts_path],'r') { |fh|
+        matches = fh.read.scan(%r{127\.0\.0\.1\s+([[:print:]]+)[\s\t]*$}).map{|x|x[0]}        
+      }
+      matches
+    end
+
+    def hosts_info
+      hosts = entries_from_hosts
+      confs = entries_from_httpd_conf
+      hosts.delete('localhost') # right ?      
+      names = hosts | confs
+      items = names.map do |name|
+        h = hosts.include? name
+        c = confs.include? name
+        {:name=>name, :in_hosts=>h, :in_conf=>c}
+      end
+      items.sort!{|a,b|  a[:name] <=> b[:name]}  
+      items
+    end
+
+    def execute_explain argv
+      puts text_for_description
+    end
+
+    def execute_list argv      
+      @linewidth = 80
+      @margin = 34
+      @_2nd_col = @linewidth - @margin
+      
+      puts %{Vhosts folder: #{@conf[:vhost_folder]}}
+      puts %{Hosts file: #{@conf[:hosts_path]}}
+      puts "Information about known virtual hosts:"
+      
+      msg1 = 'missing entry in '+@conf[:vhost_folder]+' or '+@conf[:httpd_conf_path]
+      
+      msg2 = 'also missing from '+File.basename( @conf[:httpd_conf_path] )
+      msg3 = 'missing entry in '+@conf[:httpd_conf_path]
+      
+      hosts_info.each do |item|
+        lines = []
+        unless item[:in_hosts] 
+          lines << indent(msg1 || msg2,@margin,@_2nd_col)
+          msg1 = nil
+        end
+        unless item[:in_conf]
+          lines << indent(msg3,@margin,@_2nd_col)
+        end
+        desc = lines * '.  '
+        desc = 'ok' if desc.empty?
+        puts %{#{sprintf('    %-30s',item[:name])}#{desc}}
+      end
+    end
+
+    # wishing for 1.9. 
+    # return [key_names,as_hash]
+    def hashize(list,key_name)
+      as_hash = {}
+      names = []
+      list.each do |item|
+        names << item[key_name]
+        as_hash[item[key_name]] = item
+      end
+      [names,as_hash]
+    end
+
+    def execute_add argv
+      err = case argv.length; when 0: "too few arguments."; when 1: nil; else "too many arguments."; end
+      if err
+        s = <<-END.gsub(/^ {6}/,'')
+        #{err}
+        Usage:  #{program_name} add DOMAIN
+        END
+        puts s
+        return
+      end
+      @name = argv.shift
+      name = @name
+      names,hash = hashize( hosts_info, :name )
+      if hash[name]
+        entry = hash[name]
+        do_etc_hosts = ! entry[:in_hosts] 
+        do_config    = ! entry[:in_conf]        
+      else
+        do_etc_hosts = true
+        do_config = true
+      end
+      if (!do_etc_hosts && !do_config)
+        puts %{"#{name}" already seems to exist in #{@conf[:hosts_path]} and #{@conf[:vhost_folder]}}
+        return
+      end
+      begin            
+        add_to_etc_hosts if do_etc_hosts   
+        add_to_config if do_config
+        make_docroot_and_first_file_if_necessary
+      rescue Errno::EACCES=>e
+        file = e.filename || 'file'
+        e.filename = 'blearg'
+        puts %{Sorry, couldn't make #{file}.  Do you need to run this with sudo? #{e.message}}
+        exit
+      end
+      restart_apache
+      add_directory_to_shortcuts_thing
+      puts "try going to http://#{name}/"
+    end
+
+    def add_to_etc_hosts
+      name = @name
+      make_backup_of_file @conf[:hosts_path]
+      raise VhostCliException.new("we don'l like this name") unless (name =~ /^[-a-z_0-9\.]{1,}$/)
+      File.open(@conf[:hosts_path],'a+') do |fh|
+        fh.seek(0,IO::SEEK_END)
+        fh.puts %{127.0.0.1 #{name}}
+        puts %{Added "#{name}" to #{@conf[:hosts_path]}}
+      end
+    end
+    
+    def restart_apache
+      `sudo httpd -k graceful`      
+    end
+    
+    def add_directory_to_shortcuts_thing
+      # nope -- thing 
+    end
+
+    # no trailing slash
+    def get_doc_root
+      @conf[:sites_folder]+'/'+@name+@conf[:docroot_append]
+    end
+    
+    def add_to_config
+      name = @name
+      doc_root = get_doc_root
+      content = <<-END.gsub(/^ {8}/,'')
+        <VirtualHost 127.0.0.1>
+           DocumentRoot "#{doc_root}"
+           ServerName "#{name}"
+           <Directory "#{doc_root}">
+             AllowOverride All
+        		 Allow from All
+           </Directory>
+        </VirtualHost>
+      END
+      new_file = @conf[:vhost_folder]+name+'.conf'
+      raise VhostCliException.new("file already exists!") if File.exist?(new_file) # shouldn't ever happen per caller
+      File.open(new_file,'a+') do |fh|
+        fh.write content
+        puts %{Added file: #{new_file}}        
+      end
+    end # end def add_to_config
+    
+    def make_docroot_and_first_file_if_necessary
+      docroot = get_doc_root
+      begin
+        FileUtils.mkdir(docroot,:mode=>0755,:verbose=>1)
+      rescue Exception => e
+        e.extend DetailedExceptiond
+        e.filename = docroot
+        puts "zok we are ok :"+e.filename
+    exit
+        raise e
+      end
+      fn = docroot + '/index.html'
+      unless( File.exist? fn )
+        File.open(fn,'a+') do |fh|
+          fh.write <<-END.gsub(/^ +/,'')
+          <!DOCTYPE html><html><head><title>@name</title>
+          <style type="text/css">
+            body {font-family: sans-serif; background-color: #6cc5c3; }
+            h1,h2,h3,h4,h5 {text-align: center; background-color: #f05921; color: #ffffff;
+              -webkit-border-radius: 8px;    /* for Safari */
+              -moz-border-radius: 8px;       /* for Firefox */
+              padding: .23em;              
+              text-shadow:0 0 10px #000000;            
+            }
+          </style>
+          </head><body>
+          <h1>welcome to #{@name}</h1>
+          </body></html>
+          END
+        end
+        puts %{Wrote #{fn}.}
+      end
+    end # end make_docroot_and_first_file_if_necessary
+  end # end class VhostCli
+end # end module Markus
+ 
+Markus::VhostCli.new(conf).run(ARGV)
