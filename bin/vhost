@@ -82,6 +82,12 @@ module Hipe
       raise Fail.new(err) if "" != err
       out.chop
     end
+
+    def sistum2 command
+      stdin, stdout, stderr = Open3.popen3 command
+      err = stderr.read; out = stdout.read
+      [out.chop,err.chop]
+    end
   end
 
   class AsciiTableLite
@@ -100,7 +106,7 @@ module Hipe
       rows.each do |info|
         preprender = OpenStruct.new
         @cols.each do |col|
-          cel = info.send(col).to_str
+          cel = info.send(col).to_s
           preprender.send("#{col}=",cel)
           if (@maxes[col].nil? || cel.length > @maxes[col])
             @maxes[col] = cel.length
@@ -171,9 +177,12 @@ module Hipe
     class Cli
       include Hipe::CliLitey, Hipe::ComplexDataTransformationsAndOperations,
         Hipe::Systematic
+      Table = Hipe::AsciiTableLite
 
       def initialize
-        @actions = {'help'=>1,'explain'=>1,'hosts'=>1,'confs'=>1}
+        @actions = {'help'=>1,'explain'=>1,'hosts'=>1,'confs'=>1,
+          'dump' =>1
+        }
         @path = {}
         %w(httpd_conf doc_roots vhost_confs etc_hosts).each do |guy|
           @path[guy.to_sym] = Hardcoded.send(guy)
@@ -198,6 +207,7 @@ module Hipe
                        -- you should understand this before using this script
           hosts        just shows the parsed version of the /etc/hosts file
           confs        just list the known vhosts per the sites-enabled dir.
+          dump         a tableized version of `apachectl -t -D DUMP_VHOSTS`
         END
       end
 
@@ -216,12 +226,22 @@ module Hipe
 
       def hosts argv
         rows = parse_hosts.sort!{|x,y| x.name <=> y.name }
-        Hipe::AsciiTableLite.new(:ip, :name).render(rows)
+        Table.new(:ip, :name).render(rows)
       end
 
       def confs argv
         rows = parse_confs.sort!{|x,y| x.server_name <=> y.server_name }
-        Hipe::AsciiTableLite.new(:server_name,:document_root).render(rows)
+        Table.new(:server_name,:document_root).render(rows)
+      end
+
+      def dump argv
+        parse = parse_dump_vhosts
+        puts Table.new(:server_name, :port, :conf_path).
+          render(parse.entries)
+        puts "\n"
+        puts Table.new(:missing_docroot).
+          render(parse.missing_docroots)
+        ''
       end
 
 
@@ -240,6 +260,14 @@ module Hipe
         confs = conf.sites_enabled_confs
         confs.delete_if{|x| x.document_root == '' }
         confs.sort!{|x,y| x.server_name <=> y.server_name}
+      end
+
+      def parse_dump_vhosts
+        cmd = "#{@path.apachectl} -t -D DUMP_VHOSTS"
+        out,err = sistum2(cmd)
+        raise Fail.new("huh? #{out}") unless ""==out
+        p = DumpParse.new err # @todo plan on having this crap out a lot
+        p
       end
 
       def get_orientated_with_your_environment
@@ -266,11 +294,37 @@ module Hipe
         end
         @path[:apachectl] =  infos[0].which
       end
-
-
-
-
     end # Cli
+
+    class DumpParse
+      attr_reader :missing_docroots, :entries
+      def initialize str
+        lines = str.split("\n")
+        @missing_docroots = []
+        infos = []
+        lines.each do |line|
+          case line
+            when /^Warning: DocumentRoot \[(.+)\] does not exist$/:
+              @missing_docroots.push OpenStruct.new(:missing_docroot => $1)
+            when /^.*is a NameVirtualHost$/: #skip
+            when "VirtualHost configuration:": # skip
+            when /^ {9}default server (.+) \((.+)\:\d+\)$/:
+              infos.push OpenStruct.new(
+                :server_name => $1, :conf_path => $2, :port => nil
+              )
+            when /^ {9}port ([^ ]+) namevhost (.+) \((.+)\:\d+\)$/:
+              infos.push OpenStruct.new(
+                :server_name => $2, :conf_path => $3, :port => $1
+              )
+            when /^Syntax OK$/: #skip for now end
+            else
+              raise Fail.new("we suck: parse fail:\n#{line.inspect}")
+          end
+        end
+        @entries = infos
+      end
+    end
+
 
     class ApacheConfProxy
       SitesEnabledRe = %r|^ *Include +([^\n]*sites-enabled/?) *$|m

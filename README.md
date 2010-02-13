@@ -34,10 +34,9 @@ Assumptions are (in order of least annoying to most):
        at /etc/apache2/httpd.conf.  If you use /etc/apache2/apache2.conf
        that's fine, but then Include httpd.conf.  You shoudn't be putting
        vhost stuff there anyway.   If this is a problem, ditto 2. above
-    4. all of your vhost configs will live in /etc/apache2/sites-enabled/,
-       per the ubuntu default setup
-    5. this is pretty annoying, sure: all of your doc roots for your vhosts
-       need to live at or be reachable by  /var/sites.  You can of course
+    4. all of your vhost configs will live in a folder
+       whose basename is "sites-enabled", per the ubuntu default setup
+    5. New docroots from this thing will go into /var/sites. You can of course
        change this manually in the vhost config file.  But this is what is
        meant by 'convention over configuration'
 
