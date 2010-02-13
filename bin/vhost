@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 require 'open3'
 require 'ostruct'
-# require 'ruby-debug'; puts "ERASE THIS RUBY DEBUG LINE"
+require 'ruby-debug'; puts "ERASE THIS RUBY DEBUG LINE"
 module Hipe
 
   class Fail < RuntimeError; end
@@ -95,7 +95,7 @@ module Hipe
     end
     def render rows
       @rows = rows
-      @maxes = {}
+      @maxes = Hash[*@cols.map{|x|[x, x.to_s.length]}.flatten]
       prerendereds = []
       rows.each do |info|
         preprender = OpenStruct.new
@@ -173,8 +173,7 @@ module Hipe
         Hipe::Systematic
 
       def initialize
-        @actions = {'hosts'=>1,'list'=>1,'add'=>1,'configure'=>1,'help'=>1,
-          'explain'=>1}
+        @actions = {'help'=>1,'explain'=>1,'hosts'=>1,'confs'=>1}
         @path = {}
         %w(httpd_conf doc_roots vhost_confs etc_hosts).each do |guy|
           @path[guy.to_sym] = Hardcoded.send(guy)
@@ -198,6 +197,7 @@ module Hipe
           explain      explains the steps involved in adding a virtualhost
                        -- you should understand this before using this script
           hosts        just shows the parsed version of the /etc/hosts file
+          confs        just list the known vhosts per the sites-enabled dir.
         END
       end
 
@@ -219,6 +219,11 @@ module Hipe
         Hipe::AsciiTableLite.new(:ip, :name).render(rows)
       end
 
+      def confs argv
+        rows = parse_confs.sort!{|x,y| x.server_name <=> y.server_name }
+        Hipe::AsciiTableLite.new(:server_name,:document_root).render(rows)
+      end
+
 
       ###### top secret implementationz
 
@@ -228,6 +233,13 @@ module Hipe
         ).map do |match|
           OpenStruct.new(:ip => match[0], :name => match[1])
         end
+      end
+
+      def parse_confs
+        conf = ApacheConfProxy.new @path.httpd_conf
+        confs = conf.sites_enabled_confs
+        confs.delete_if{|x| x.document_root == '' }
+        confs.sort!{|x,y| x.server_name <=> y.server_name}
       end
 
       def get_orientated_with_your_environment
@@ -259,6 +271,59 @@ module Hipe
 
 
     end # Cli
+
+    class ApacheConfProxy
+      SitesEnabledRe = %r|^ *Include +([^\n]*sites-enabled/?) *$|m
+      # code for pasring the file itself left behind in bf91c
+      def initialize path
+        @path = path
+        @contents = File.read path
+      end
+
+      # this project it is hard coded to expect that there is
+      # only one such entry in the file
+      def sites_enabled_path
+        arr = @contents.scan(SitesEnabledRe).map{|x| x[0]}
+        case arr.length
+          when 0: nil
+          when 1: arr[0]
+          else arr
+        end
+      end
+
+      def sites_enabled_confs
+        path1 = sites_enabled_path
+        paths = Dir[File.join(path1,'*.conf')]
+        paths.map do |path|
+          VhostConfProxy.new(path)
+        end
+      end
+    end
+
+    class VhostConfProxy < ApacheConfProxy
+      def initialize *args
+        super(*args)
+        @cache = {}
+      end
+      def document_root
+        _get('DocumentRoot')
+      end
+      def server_name
+        _get('ServerName')
+      end
+      def _get thing
+        @cache[thing] ||= begin
+          re = Regexp.new('^ *'<<Regexp.escape(thing)<<
+          '  *"?([^"]+)"? *$')
+          matches = @contents.scan(re)
+          case matches.length
+            when 0: ""
+            when 1: matches[0][0]
+            else matches.map{|x| x[0]}.join(',')
+          end
+        end
+      end
+    end
   end # Vhost
 end # Hipe
 
