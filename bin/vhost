@@ -145,23 +145,6 @@ module Hipe
     end
   end
 
-
-  module ComplexDataTransformationsAndOperations
-
-    # wishing for 1.9.
-    # return [key_names,as_hash]
-    def hashize list, key_name
-      as_hash = {}
-      names = []
-      list.each do |item|
-        names << item[key_name]
-        as_hash[item[key_name]] = item
-      end
-      [names,as_hash]
-    end
-
-  end
-
   module Vhost
 
     Hardcoded = OpenStruct.new(
@@ -175,13 +158,12 @@ module Hipe
     class Fail < RuntimeError; end
 
     class Cli
-      include Hipe::CliLitey, Hipe::ComplexDataTransformationsAndOperations,
-        Hipe::Systematic
+      include Hipe::CliLitey, Hipe::Systematic
       Table = Hipe::AsciiTableLite
 
       def initialize
         @actions = {'help'=>1,'explain'=>1,'hosts'=>1,'confs'=>1,
-          'dump' =>1
+          'dump' =>1, 'list'=>1
         }
         @path = {}
         %w(httpd_conf doc_roots vhost_confs etc_hosts).each do |guy|
@@ -208,6 +190,7 @@ module Hipe
           hosts        just shows the parsed version of the /etc/hosts file
           confs        just list the known vhosts per the sites-enabled dir.
           dump         a tableized version of `apachectl -t -D DUMP_VHOSTS`
+          list         report everything you know about anything
         END
       end
 
@@ -242,6 +225,13 @@ module Hipe
         puts Table.new(:missing_docroot).
           render(parse.missing_docroots)
         ''
+      end
+
+      def list argv
+        infos = all_info.sort!{|x,y| x.host <=> y.host}
+        Table.new(
+          :host, :host_ok, :ip, :port, :docroot, :docroot_ok, :conf
+        ).render(infos)
       end
 
 
@@ -293,6 +283,32 @@ module Hipe
             )
         end
         @path[:apachectl] =  infos[0].which
+      end
+
+      def all_info
+        hosts = parse_hosts
+        confs = parse_confs
+        dumps = parse_dump_vhosts  # entries, missing_doctroots
+        missings = Hash[*
+          dumps.missing_docroots.each.map{|x| [x.missing_docroot, 1]}.flatten
+        ]
+        master = Hash.new(){|h,k| h[k] = OpenStruct.new(:host=>k) }
+        hosts.each do |host|
+          item = master[host.name]
+          item.ip = host.ip
+          item.host_ok = 'ok'
+        end
+        confs.each do |conf|
+          item = master[conf.server_name]
+          item.docroot = conf.document_root
+          item.docroot_ok = (missings[conf.document_root]) ? 'missing' : 'ok'
+        end
+        dumps.entries.each do |dump|
+          item = master[dump.server_name]
+          item.conf = dump.conf_path
+          item.port = dump.port
+        end
+        master.values
       end
     end # Cli
 
