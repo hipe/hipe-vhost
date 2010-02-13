@@ -1,0 +1,265 @@
+#!/usr/bin/env ruby
+require 'open3'
+require 'ostruct'
+# require 'ruby-debug'; puts "ERASE THIS RUBY DEBUG LINE"
+module Hipe
+
+  class Fail < RuntimeError; end
+
+  module AsciiFormattey
+    def wordwrap(text,width)
+      text.split("\n").map do |line|
+        line.length > width ? line.gsub(
+          /(.{1,#{width}})(\s+|$)/, "\\1\n").strip : line
+      end * "\n"
+    end
+
+    def indent(text, margin, width)
+      wordwrap(text,width).gsub(/\n/, "\n"+(' '*margin))
+    end
+  end
+
+  module CliLitey
+    # if this thing exceeds 30 lines of code use hipe-core/interfacey
+    include AsciiFormattey
+    def run(argv)
+      return usage_text unless argv[0] && @actions[argv[0]]
+      action = argv.shift
+      action = help if (['-h','--help'].include?(action))
+      meth = action # 'execute_'+action
+      send(meth, argv)
+    end
+
+    def program_name
+      File.basename $PROGRAM_NAME
+    end
+
+    def help(args)
+      usage_text+"\n\n"
+    end
+  end
+
+  module FileyCoyote
+    def make_backup_copy orig_path
+      append = Time.now.strftime('%Y-%m-%d_%H:%M:%S')
+      new_name = %{#{orig_path}.bak.#{append}}
+      i = 1
+      while File.exist? new_name  # very unlikely
+        new_name = %{#{orig_path}.bak.#{append}.#{i}}
+        i += 1
+      end
+      begin
+        FileUtils.copy_file orig_path, new_name
+      rescue Errno::EACCES => e
+        e.extend DetailedException
+        e.filename = new_name
+        raise e
+      end
+      puts "made backup copy: #{new_name}"
+    end
+  end
+
+  module DetailedException
+    def self.extend_object(base)
+     base.instance_eval do
+        @__info = {}
+     end
+     super
+    end
+    def method_missing name, *args, &blah
+      if /^(.+)=$/ =~ name.to_s
+        @__info[$1.to_sym] = args[0]
+      else
+        @__info[name.to_sym]
+      end
+    end
+  end
+
+  module Systematic
+    def sistum command
+      stdin, stdout, stderr = Open3.popen3 command
+      err = stderr.read; out = stdout.read
+      raise Fail.new(err) if "" != err
+      out.chop
+    end
+  end
+
+  class AsciiTableLite
+    def initialize(*cols)
+      @cols = cols
+      @pipe = '|'
+      @cona = '+'
+      @rule = '-'
+      @rulesep = @rule * 3
+      @sep = " #{@pipe} "
+    end
+    def render rows
+      @rows = rows
+      @maxes = {}
+      prerendereds = []
+      rows.each do |info|
+        preprender = OpenStruct.new
+        @cols.each do |col|
+          cel = info.send(col).to_str
+          preprender.send("#{col}=",cel)
+          if (@maxes[col].nil? || cel.length > @maxes[col])
+            @maxes[col] = cel.length
+          end
+        end
+        prerendereds.push preprender
+      end
+      @lines = [go_sep]
+      @lines.push go_headers
+      @lines.push go_sep
+      prerendereds.each do |info|
+        @lines.push go_row info
+      end
+      @lines.push go_sep
+      @lines * "\n"
+    end
+
+    ## private
+
+    def go_sep
+      "#{@cona}#{@rule}"<<
+      "#{@cols.map{|x| @rule * @maxes[x]} * @rulesep }"<<
+      "#{@rule}#{@cona}"
+    end
+
+    def go_headers
+      "#{@pipe} "<<
+      (@cols.map{|x|x.to_s.ljust(@maxes[x])}* @sep)<<
+      " #{@pipe}"
+    end
+
+    def go_row row
+      "#{@pipe} "<<
+      (@cols.map{|x|row.send(x).to_s.ljust(@maxes[x])}*@sep)<<
+      " #{@pipe}"
+    end
+  end
+
+
+  module ComplexDataTransformationsAndOperations
+
+    # wishing for 1.9.
+    # return [key_names,as_hash]
+    def hashize list, key_name
+      as_hash = {}
+      names = []
+      list.each do |item|
+        names << item[key_name]
+        as_hash[item[key_name]] = item
+      end
+      [names,as_hash]
+    end
+
+  end
+
+  module Vhost
+
+    Hardcoded = OpenStruct.new(
+      :execs      => ['apachectl','apache2ctl'],
+      :httpd_conf  => '/etc/apache2/httpd.conf',
+      :doc_roots  => '/var/sites/',
+      :vhost_confs => '/etc/apache2/sites-enabled/',
+      :etc_hosts   => '/etc/hosts'
+    );
+
+    class Fail < RuntimeError; end
+
+    class Cli
+      include Hipe::CliLitey, Hipe::ComplexDataTransformationsAndOperations,
+        Hipe::Systematic
+
+      def initialize
+        @actions = {'hosts'=>1,'list'=>1,'add'=>1,'configure'=>1,'help'=>1,
+          'explain'=>1}
+        @path = {}
+        %w(httpd_conf doc_roots vhost_confs etc_hosts).each do |guy|
+          @path[guy.to_sym] = Hardcoded.send(guy)
+        end
+        get_orientated_with_your_environment
+        @path = OpenStruct.new(@path)
+      end
+
+      ###### command implementations
+
+      def explain argv; explain_text end
+
+      def usage_text
+        <<-END.gsub(/^ {8}/,'')
+        do some stuff with your apache server virtualhosts.
+
+        Usage: #{program_name} COMMAND [ARGUMENTS]
+
+        Commands:
+          help         show this screen
+          explain      explains the steps involved in adding a virtualhost
+                       -- you should understand this before using this script
+          hosts        just shows the parsed version of the /etc/hosts file
+        END
+      end
+
+      def explain_text
+        <<-END.gsub(/^ {8}/,'')
+          HOW TO ADD A VIRTUALHOST (the really short version):
+          1) ~> locate httpd.conf # then jump to the relevant lines at the end
+          2) copy paste a new virtualhost section into the file -or-
+             add such vhost config file into a folder that gets Include'd
+          3) ~> locate /etc/hosts # find the right file, it's usually this one
+          4) copy paste your line
+          5) apache(2?)ctl stop
+          6) apache(2?)ctl start
+        END
+      end
+
+      def hosts argv
+        rows = parse_hosts.sort!{|x,y| x.name <=> y.name }
+        Hipe::AsciiTableLite.new(:ip, :name).render(rows)
+      end
+
+
+      ###### top secret implementationz
+
+      def parse_hosts
+        File.read(@path.etc_hosts).scan(
+          %r{(127\.0\.0\.1)\s+([[:print:]]+)[\s\t]*$}
+        ).map do |match|
+          OpenStruct.new(:ip => match[0], :name => match[1])
+        end
+      end
+
+      def get_orientated_with_your_environment
+        list = Hardcoded.execs
+        infos = list.map do |executable|
+          OpenStruct.new(
+            'which' => sistum("which #{executable}")
+          )
+        end
+        infos.delete_if{|x| ""==x.which}
+        case infos.length
+          when 0:
+            raise Fail.new("#{sistum('whoami')} has neither "<<
+              (list * ' nor ') << "within his or her executable path."<<
+              "  I can be of no help to you."
+            )
+          when 1: # fallthru
+          else
+            raise Fail.new("#{sistum('whoami')} has all of these in"<<
+              " his or her path: "<< (infos.map(&:which) * ' and ')<<'.'<<
+              "  As this is a zero-configuration jobbie, I have no idea"<<
+              " what to do."
+            )
+        end
+        @path[:apachectl] =  infos[0].which
+      end
+
+
+
+
+    end # Cli
+  end # Vhost
+end # Hipe
+
+puts Hipe::Vhost::Cli.new.run ARGV
