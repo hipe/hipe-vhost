@@ -7,14 +7,10 @@ realized it was kind of ridiculous needing a config file to manage a config file
 in a perfect world, adding a new vhost *should* take only a few seconds.  if you've done it many times it *does* take you a few minutes.  writing this *did* take me many hours
 
 you can:
-  - see a list of your vhosts in your httpd.conf whose doc root paths
-      are missing.
-  - see a list of your vhosts in your httpd.conf who don't have entries in
-      your /etc/hosts.
-  - see a list of entries in your /etc/hosts that don't have
-      corresponding vhosts.
-  - see a list of directories in your default vhost doc root directory that
-      don't have /etc/hosts entries. etc.
+  - see a list of your vhosts in your httpd.conf whose doc root paths are missing.
+  - see a list of your vhosts in your httpd.conf who don't have entries in your /etc/hosts.
+  - see a list of entries in your /etc/hosts that don't have corresponding vhosts.
+  - see a list of directories in your default vhost doc root directory that don't have /etc/hosts entries. etc.
 
 Output pretty ascii tables for all of this.
 

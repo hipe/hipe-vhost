@@ -23,7 +23,7 @@ module Hipe
   # So note that an exception caught from another library and 'enhanced'
   # by this one will not be a kind of Hipe::Fail, only a kind of Hipe::Failey.
 
-  # So to have your bases covered, resuce Hipe::Failey or the subset of
+  # So to have your bases covered, rescue Hipe::Failey or the subset of
   # Hipe::Failies that you care about rescuing.
 
   module Failey; end
@@ -38,6 +38,8 @@ module Hipe
 
   # AsciiFormattey last seen in f2fa2
 
+  # this guy was moved into ack-lite-parse and modified. if you
+  # want any more features, start with that one and note it there
   module CliLitey
     # if this thing exceeds 30 lines of code use hipe-core/interfacey
     def cli_run(argv)
@@ -179,6 +181,12 @@ module Hipe
   end
 
   class AsciiTableLite
+    #
+    # For now this is the official home of this here in vhost.
+    # This is a simplified version of hipe-core/struct/table
+    # Note any other projects that copy paste this here:
+    #   [none]
+    #
 
     def initialize(*cols)
       @cols = cols
