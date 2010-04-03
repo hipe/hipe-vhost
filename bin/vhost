@@ -288,7 +288,7 @@ module Hipe
 
     HardCoded = OpenStruct.new(
       :execs       => ['apachectl','apache2ctl'],
-      :httpd_conf  => '/etc/apache2/httpd.conf',
+      :httpd_conf  => '/etc/apache2/apache2.conf',
       :docroots    => '~/Sites',
       :vhost_confs => '/etc/apache2/sites-enabled/',
       :etc_hosts   => '/etc/hosts'
@@ -477,8 +477,11 @@ module Hipe
       def parse_dump_vhosts
         cmd = "#{@path.apachectl} -t -D DUMP_VHOSTS"
         out,err = sistum2(cmd)
-        raise Fail.new("huh? #{out}") unless ""==out
-        p = DumpParse.new err # @todo plan on having this crap out a lot
+	lines = out.split("\n");
+	lines.concat err.split("\n");
+        # on ubuntu, we get 'Syntax OK' in out, and details in err
+        # on osx, we get empty out and everything in err
+        p = DumpParse.new lines.join("\n") # @todo plan on having this crap out a lot
         p
       end
 
@@ -545,6 +548,7 @@ module Hipe
             when /^Warning: DocumentRoot \[(.+)\] does not exist$/:
               @missing_docroots.push OpenStruct.new(:missing_docroot => $1)
             when /^.*is a NameVirtualHost$/: #skip
+            when /^wildcard NameVirtualHosts and _default_ servers: *$/: #skip
             when "VirtualHost configuration:": # skip
             when /^ {9}default server (.+) \((.+)\:\d+\)$/:
               infos.push OpenStruct.new(
@@ -569,6 +573,9 @@ module Hipe
       # code for pasring the file itself left behind in bf91c
       def initialize path
         @path = path
+	if !File.readable?(@path)
+	  raise UserFail.new("no such apache conf file or not readable: #{@path}")
+        end
         @contents = File.read path
       end
 
@@ -577,7 +584,8 @@ module Hipe
       def sites_enabled_path
         arr = @contents.scan(SitesEnabledRe).map{|x| x[0]}
         case arr.length
-          when 0: nil
+          when 0:
+            raise EnvFail.new("no Include ...sites-enabled found in #{@path}")
           when 1: arr[0]
           else arr
         end
