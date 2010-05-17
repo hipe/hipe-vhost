@@ -1,8 +1,24 @@
 #!/usr/bin/env ruby
+require 'json'
 require 'open3'
 require 'ostruct'
 require 'optparse'
 require 'fileutils'
+require 'ruby-debug'
+
+module Hipe
+  module Vhost
+    HardCoded = OpenStruct.new(
+      :execs       => ['apachectl','apache2ctl'],
+      :httpd_conf  => ['/etc/apache2/apache2.conf',
+                       '/etc/apache2/httpd.conf'],
+      :docroots    => '~/Sites',
+      :vhost_confs => '/etc/apache2/sites-enabled/',
+      :etc_hosts   => '/etc/hosts'
+    )
+  end
+end
+
 
 module Hipe
 
@@ -286,14 +302,6 @@ module Hipe
 
   module Vhost
 
-    HardCoded = OpenStruct.new(
-      :execs       => ['apachectl','apache2ctl'],
-      :httpd_conf  => '/etc/apache2/apache2.conf',
-      :docroots    => '~/Sites',
-      :vhost_confs => '/etc/apache2/sites-enabled/',
-      :etc_hosts   => '/etc/hosts'
-    )
-
     class Fail < RuntimeError; end
 
     class Cli
@@ -305,9 +313,13 @@ module Hipe
           'dump' =>1, 'list'=>1, 'add'=>1
         }
         @path = {}
-        %w(httpd_conf docroots vhost_confs etc_hosts).each do |guy|
+        %w(docroots vhost_confs etc_hosts).each do |guy|
           @path[guy.to_sym] = File.expand_path HardCoded.send(guy)
         end
+        these = HardCoded.httpd_conf
+        one = these.detect{ |x| File.exist?(x) }
+        one or fail("not found: #{these.join(', ')}")
+        @path[:httpd_conf] = one
         get_orientated_with_your_environment
         @path = OpenStruct.new(@path)
       end
@@ -790,4 +802,6 @@ module Hipe
   end # Vhost
 end # Hipe
 
-puts Hipe::Vhost::Cli.new.run ARGV
+if File.basename($PROGRAM_NAME) == File.basename(__FILE__)
+  puts Hipe::Vhost::Cli.new.run(ARGV)
+end
