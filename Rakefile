@@ -14,6 +14,7 @@ Jeweler::Tasks.new do |s|
   s.homepage = 'http://vhost.hipeland.org'
   s.name = 'hipe-vhost'
   s.rubyforge_project = 'hipe-vhost'
+  s.require_paths = ['lib'] # annoying requirement
   s.summary = 'a ruby commandline app to add vhosts'
 end
 
