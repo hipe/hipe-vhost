@@ -571,6 +571,11 @@ module Hipe
                 :server_name => $2, :conf_path => $3, :port => $1
               )
             when /^Syntax OK$/: #skip for now end
+            when /^httpd: Could not reliably determine/: #skip
+            when /^\*:(\d{4}) +([^ ]+) +\((.+)\:\d+\)$/ 
+              infos.push OpenStruct.new(
+                :server_name => $2, :conf_path => $3, :port => $1
+              )
             else
               raise Fail.new("we suck: parse fail:\n#{line.inspect}")
           end
